@@ -197,7 +197,7 @@ pipeline {
 
                     if "!K8S_CLUSTER!"=="none" (
                         echo [ERROR] No active, functional Kubernetes cluster is reachable!
-                        echo Please start Kubernetes in Docker Desktop or start Minikube (minikube start).
+                        echo Please start Kubernetes in Docker Desktop or run minikube start.
                         exit /b 1
                     )
 
