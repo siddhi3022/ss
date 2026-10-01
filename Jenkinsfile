@@ -8,6 +8,7 @@ pipeline {
         VERSION = 'v1.0.0'
         IMAGE = 'inventory-service:v1.0.0'
         REGISTRY_IMAGE = 'localhost:2000/inventory-service:v1.0.0'
+        KUBECONFIG = 'C:\\Users\\Riddhi siddhi\\.kube\\config'
     }
 
     stages {
@@ -90,10 +91,20 @@ pipeline {
         stage('Load Image to Kubernetes') {
             steps {
                 bat '''
+                    setlocal EnableDelayedExpansion
+                    set K8S_CLUSTER=none
+
                     docker inspect desktop-control-plane >NUL 2>&1
                     if not errorlevel 1 (
-                        echo [K8s] Docker Desktop detected. Loading %IMAGE%...
                         kubectl config use-context docker-desktop >NUL 2>&1 || ver >NUL
+                        kubectl cluster-info >NUL 2>&1
+                        if not errorlevel 1 (
+                            set K8S_CLUSTER=docker-desktop
+                        )
+                    )
+
+                    if "!K8S_CLUSTER!"=="docker-desktop" (
+                        echo [K8s] Docker Desktop detected and active. Loading %IMAGE%...
                         del /f /q k8s.tar 2>NUL || ver >NUL
                         docker save -o k8s.tar %IMAGE%
                         docker cp k8s.tar desktop-control-plane:/k8s.tar
@@ -103,20 +114,10 @@ pipeline {
                         exit /b 0
                     )
 
-                    where minikube >NUL 2>&1
-                    if not errorlevel 1 (
-                        minikube status >NUL 2>&1
-                        if not errorlevel 1 (
-                            echo [K8s] Minikube CLI detected. Loading %IMAGE%...
-                            kubectl config use-context minikube >NUL 2>&1 || ver >NUL
-                            minikube image load %IMAGE%
-                            exit /b 0
-                        )
-                    )
-
                     docker inspect minikube >NUL 2>&1
                     if not errorlevel 1 (
                         echo [K8s] Minikube container detected. Loading %IMAGE%...
+                        docker start minikube >NUL 2>&1 || ver >NUL
                         kubectl config use-context minikube >NUL 2>&1 || ver >NUL
                         del /f /q k8s.tar 2>NUL || ver >NUL
                         docker save -o k8s.tar %IMAGE%
@@ -125,6 +126,21 @@ pipeline {
                         docker exec minikube rm -f /k8s.tar
                         del /f /q k8s.tar
                         exit /b 0
+                    )
+
+                    where minikube >NUL 2>&1
+                    if not errorlevel 1 (
+                        minikube status >NUL 2>&1 || (
+                            echo [K8s] Starting Minikube...
+                            minikube start --driver=docker || ver >NUL
+                        )
+                        minikube status >NUL 2>&1
+                        if not errorlevel 1 (
+                            echo [K8s] Minikube CLI detected. Loading %IMAGE%...
+                            kubectl config use-context minikube >NUL 2>&1 || ver >NUL
+                            minikube image load %IMAGE%
+                            exit /b 0
+                        )
                     )
 
                     echo [K8s] Using local image cache...
@@ -136,33 +152,52 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 bat '''
+                    setlocal EnableDelayedExpansion
+                    set K8S_CLUSTER=none
+
                     docker inspect desktop-control-plane >NUL 2>&1
                     if not errorlevel 1 (
-                        echo [K8s] Active cluster: Docker Desktop
                         kubectl config use-context docker-desktop >NUL 2>&1 || ver >NUL
-                    ) else (
+                        kubectl cluster-info >NUL 2>&1
+                        if not errorlevel 1 (
+                            set K8S_CLUSTER=docker-desktop
+                            echo [K8s] Active cluster verified: Docker Desktop
+                        )
+                    )
+
+                    if "!K8S_CLUSTER!"=="none" (
                         docker inspect minikube >NUL 2>&1
                         if not errorlevel 1 (
                             echo [K8s] Minikube container detected. Ensuring minikube is running...
                             docker start minikube >NUL 2>&1 || ver >NUL
                             kubectl config use-context minikube >NUL 2>&1 || ver >NUL
-                        ) else (
-                            where minikube >NUL 2>&1
+                            kubectl cluster-info >NUL 2>&1
                             if not errorlevel 1 (
-                                minikube status >NUL 2>&1 || (
-                                    echo [K8s] Starting Minikube...
-                                    minikube start --driver=docker || ver >NUL
-                                )
-                                minikube status >NUL 2>&1 && (
-                                    echo [K8s] Active cluster: Minikube
-                                    kubectl config use-context minikube >NUL 2>&1 || ver >NUL
-                                )
+                                set K8S_CLUSTER=minikube
+                                echo [K8s] Active cluster verified: Minikube container
                             )
                         )
                     )
 
-                    kubectl cluster-info >NUL 2>&1 || (
-                        echo [ERROR] No active Kubernetes cluster is reachable! Please start Docker Desktop Kubernetes or Minikube.
+                    if "!K8S_CLUSTER!"=="none" (
+                        where minikube >NUL 2>&1
+                        if not errorlevel 1 (
+                            minikube status >NUL 2>&1 || (
+                                echo [K8s] Starting Minikube cluster...
+                                minikube start --driver=docker || ver >NUL
+                            )
+                            kubectl config use-context minikube >NUL 2>&1 || ver >NUL
+                            kubectl cluster-info >NUL 2>&1
+                            if not errorlevel 1 (
+                                set K8S_CLUSTER=minikube
+                                echo [K8s] Active cluster verified: Minikube
+                            )
+                        )
+                    )
+
+                    if "!K8S_CLUSTER!"=="none" (
+                        echo [ERROR] No active, functional Kubernetes cluster is reachable!
+                        echo Please start Kubernetes in Docker Desktop or start Minikube (minikube start).
                         exit /b 1
                     )
 
